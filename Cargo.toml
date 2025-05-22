@@ -1,7 +1,7 @@
 [package]
 name = "gamecode-bedrock"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 authors = ["Ed Sweeney <ed@onextent.com>"]
 description = "AWS Bedrock implementation for gamecode-backend with production-ready retry logic"

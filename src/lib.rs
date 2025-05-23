@@ -531,7 +531,9 @@ mod tests {
 
     #[test]
     fn test_supported_models() {
-        let config = aws_config::SdkConfig::builder().build();
+        let config = aws_config::SdkConfig::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .build();
         let backend = BedrockBackend::new_with_config(&config);
         let models = backend.supported_models();
         assert!(!models.is_empty());
@@ -540,7 +542,9 @@ mod tests {
 
     #[test]
     fn test_message_conversion() {
-        let config = aws_config::SdkConfig::builder().build();
+        let config = aws_config::SdkConfig::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .build();
         let backend = BedrockBackend::new_with_config(&config);
         
         let messages = vec![Message::text(MessageRole::User, "Hello")];

@@ -48,7 +48,9 @@ impl BedrockBackend {
         Ok(Self {
             client,
             region: region.to_string(),
-            default_model: "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
+            //default_model: "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
+            //default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0".to_string(),
+            default_model: "us.anthropic.claude-opus-4-20250514-v1:0".to_string(),
         })
     }
 
@@ -63,7 +65,9 @@ impl BedrockBackend {
         Self {
             client,
             region,
-            default_model: "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
+            //default_model: "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
+            //default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0".to_string(),
+            default_model: "us.anthropic.claude-opus-4-20250514-v1:0".to_string(),
         }
     }
 
@@ -75,6 +79,9 @@ impl BedrockBackend {
 
     async fn raw_chat(&self, request: ChatRequest) -> BackendResult<ChatResponse> {
         let model_id = request.model.as_ref().unwrap_or(&self.default_model);
+
+        // Log the actual model being used for this request
+        debug!("Bedrock API request using model: {}", model_id);
 
         // Convert request to Bedrock format
         let bedrock_messages = self.convert_messages(&request.messages)?;
@@ -336,6 +343,8 @@ impl LLMBackend for BedrockBackend {
 
     fn supported_models(&self) -> Vec<String> {
         vec![
+            "us.anthropic.claude-opus-4-20250514-v1:0".to_string(),
+            "us.anthropic.claude-sonnet-4-20250514-v1:0".to_string(),
             "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
             "anthropic.claude-3-5-sonnet-20240620-v1:0".to_string(),
             "anthropic.claude-3-5-haiku-20241022-v1:0".to_string(),
@@ -547,7 +556,8 @@ mod tests {
         let backend = BedrockBackend::new_with_config(&config);
         let models = backend.supported_models();
         assert!(!models.is_empty());
-        assert!(models.contains(&"us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string()));
+        //assert!(models.contains(&"us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string()));
+        assert!(models.contains(&"us.anthropic.claude-opus-4-20250514-v1:0".to_string()));
     }
 
     #[test]

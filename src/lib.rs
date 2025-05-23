@@ -48,9 +48,9 @@ impl BedrockBackend {
         Ok(Self {
             client,
             region: region.to_string(),
-            //default_model: "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
+            default_model: "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
             //default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0".to_string(),
-            default_model: "us.anthropic.claude-opus-4-20250514-v1:0".to_string(),
+            //default_model: "us.anthropic.claude-opus-4-20250514-v1:0".to_string(),
         })
     }
 
@@ -65,9 +65,9 @@ impl BedrockBackend {
         Self {
             client,
             region,
-            //default_model: "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
+            default_model: "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
             //default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0".to_string(),
-            default_model: "us.anthropic.claude-opus-4-20250514-v1:0".to_string(),
+            //default_model: "us.anthropic.claude-opus-4-20250514-v1:0".to_string(),
         }
     }
 

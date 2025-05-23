@@ -11,8 +11,9 @@ use aws_sdk_bedrockruntime::{
 };
 use aws_smithy_types::{Document, Number};
 use gamecode_backend::{
-    BackendError, BackendResult, ChatRequest, ChatResponse, ChatStream, ContentBlock,
-    InferenceConfig, LLMBackend, Message, MessageRole, RetryConfig, Tool, ToolCall, Usage,
+    BackendError, BackendResult, BackendStatus, ChatRequest, ChatResponse, ChatStream,
+    ContentBlock, InferenceConfig, LLMBackend, Message, MessageRole, RetryConfig, Tool, ToolCall,
+    Usage,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -323,7 +324,7 @@ impl LLMBackend for BedrockBackend {
             || self.raw_chat(request.clone()),
             retry_config.max_retries,
             retry_config.initial_delay,
-            retry_config.verbose,
+            request.status_callback.as_ref(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("Chat request failed: {}", e))
@@ -353,7 +354,7 @@ async fn retry_with_backoff<F, Fut, T>(
     operation: F,
     max_retries: usize,
     initial_delay: Duration,
-    verbose: bool,
+    status_callback: Option<&gamecode_backend::StatusCallback>,
 ) -> BackendResult<T>
 where
     F: Fn() -> Fut,
@@ -369,22 +370,6 @@ where
                 let error_str = format!("{:?}", error);
                 let concise_error = extract_error_summary(&error_str);
 
-                if verbose {
-                    eprintln!(
-                        "\n🚨 Bedrock request failed (attempt {}/{}): {}",
-                        attempt + 1,
-                        max_retries + 1,
-                        error_str
-                    );
-                } else {
-                    eprintln!(
-                        "\n🚨 Bedrock request failed (attempt {}/{}): {}",
-                        attempt + 1,
-                        max_retries + 1,
-                        concise_error
-                    );
-                }
-
                 if attempt == max_retries {
                     last_error = Some(error);
                     break;
@@ -392,36 +377,31 @@ where
 
                 // Don't retry validation errors
                 if !error.is_retryable() {
-                    if verbose {
-                        eprintln!(
-                            "⚠️  Non-retryable error detected, not retrying: {}",
-                            error_str
-                        );
-                    } else {
-                        eprintln!(
-                            "⚠️  Non-retryable error detected, not retrying: {}",
-                            concise_error
-                        );
+                    if let Some(callback) = status_callback {
+                        callback(BackendStatus::NonRetryableError {
+                            message: concise_error,
+                        });
                     }
                     last_error = Some(error);
                     break;
                 }
 
                 let is_throttling = matches!(error, BackendError::RateLimited);
-                if is_throttling {
-                    println!(
-                        "⚠️  Rate limited by AWS Bedrock (attempt {}/{}), retrying in {}ms...",
-                        attempt + 1,
-                        max_retries + 1,
-                        delay.as_millis()
-                    );
-                } else {
-                    println!(
-                        "⚠️  Retrying Bedrock request (attempt {}/{}), retrying in {}ms...",
-                        attempt + 1,
-                        max_retries + 1,
-                        delay.as_millis()
-                    );
+                if let Some(callback) = status_callback {
+                    if is_throttling {
+                        callback(BackendStatus::RateLimited {
+                            attempt: attempt + 1,
+                            max_attempts: max_retries + 1,
+                            delay_ms: delay.as_millis() as u64,
+                        });
+                    } else {
+                        callback(BackendStatus::RetryAttempt {
+                            attempt: attempt + 1,
+                            max_attempts: max_retries + 1,
+                            delay_ms: delay.as_millis() as u64,
+                            reason: concise_error,
+                        });
+                    }
                 }
 
                 debug!(
@@ -435,7 +415,7 @@ where
                 sleep(delay).await;
 
                 // Exponential backoff with cap
-                delay = std::cmp::min(delay * 3, Duration::from_secs(60));
+                delay = std::cmp::min(delay * 2, Duration::from_secs(20));
                 last_error = Some(error);
             }
         }

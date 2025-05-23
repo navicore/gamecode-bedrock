@@ -8,7 +8,7 @@ description = "AWS Bedrock implementation for gamecode-backend with production-r
 repository = "https://github.com/navicore/gamecode-bedrock"
 
 [dependencies]
-gamecode-backend = { git = "https://github.com/navicore/gamecode-backend" }
+gamecode-backend = { path = "../gamecode-backend" }
 aws-config = "1.6.3"
 aws-sdk-bedrockruntime = "1.89.0"
 aws-smithy-types = "1.2.8"

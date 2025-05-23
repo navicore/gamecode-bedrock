@@ -3,17 +3,16 @@ use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::{
     types::{
-        ContentBlock as BedrockContentBlock, ConversationRole, InferenceConfiguration, 
-        Message as BedrockMessage, Tool as BedrockTool, ToolConfiguration,
-        ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolUseBlock,
+        ContentBlock as BedrockContentBlock, ConversationRole, InferenceConfiguration,
+        Message as BedrockMessage, Tool as BedrockTool, ToolConfiguration, ToolInputSchema,
+        ToolResultBlock, ToolResultContentBlock, ToolUseBlock,
     },
     Client,
 };
 use aws_smithy_types::{Document, Number};
 use gamecode_backend::{
-    BackendError, BackendResult, ChatRequest, ChatResponse, ChatStream,
-    ContentBlock, InferenceConfig, LLMBackend, Message, MessageRole, RetryConfig, Tool, ToolCall,
-    Usage,
+    BackendError, BackendResult, ChatRequest, ChatResponse, ChatStream, ContentBlock,
+    InferenceConfig, LLMBackend, Message, MessageRole, RetryConfig, Tool, ToolCall, Usage,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -25,6 +24,7 @@ use uuid::Uuid;
 /// AWS Bedrock implementation of the LLM backend
 pub struct BedrockBackend {
     client: Client,
+    #[allow(dead_code)]
     region: String,
     default_model: String,
 }
@@ -74,7 +74,7 @@ impl BedrockBackend {
 
     async fn raw_chat(&self, request: ChatRequest) -> BackendResult<ChatResponse> {
         let model_id = request.model.as_ref().unwrap_or(&self.default_model);
-        
+
         // Convert request to Bedrock format
         let bedrock_messages = self.convert_messages(&request.messages)?;
         let bedrock_tools = self.convert_tools(&request.tools.unwrap_or_default())?;
@@ -98,9 +98,12 @@ impl BedrockBackend {
             for tool in bedrock_tools {
                 tool_config_builder = tool_config_builder.tools(tool);
             }
-            let tool_config = tool_config_builder.build().map_err(|e| BackendError::InternalError {
-                message: format!("Failed to build tool configuration: {}", e),
-            })?;
+            let tool_config =
+                tool_config_builder
+                    .build()
+                    .map_err(|e| BackendError::InternalError {
+                        message: format!("Failed to build tool configuration: {}", e),
+                    })?;
             request_builder = request_builder.tool_config(tool_config);
         }
 
@@ -141,7 +144,10 @@ impl BedrockBackend {
                             })?;
                         content_blocks.push(BedrockContentBlock::ToolUse(tool_use));
                     }
-                    ContentBlock::ToolResult { tool_call_id, result } => {
+                    ContentBlock::ToolResult {
+                        tool_call_id,
+                        result,
+                    } => {
                         let tool_result = ToolResultBlock::builder()
                             .tool_use_id(tool_call_id)
                             .content(ToolResultContentBlock::Text(result.clone()))
@@ -175,7 +181,9 @@ impl BedrockBackend {
             let tool_spec = aws_sdk_bedrockruntime::types::ToolSpecification::builder()
                 .name(&tool.name)
                 .description(&tool.description)
-                .input_schema(ToolInputSchema::Json(json_value_to_document(&tool.input_schema)))
+                .input_schema(ToolInputSchema::Json(json_value_to_document(
+                    &tool.input_schema,
+                )))
                 .build()
                 .map_err(|e| BackendError::InternalError {
                     message: format!("Failed to build tool specification: {}", e),
@@ -190,10 +198,10 @@ impl BedrockBackend {
     fn convert_inference_config(&self, config: &Option<InferenceConfig>) -> InferenceConfiguration {
         let default_config = InferenceConfig::default();
         let config = config.as_ref().unwrap_or(&default_config);
-        
+
         InferenceConfiguration::builder()
-            .set_temperature(config.temperature.map(|t| t as f32))
-            .set_top_p(config.top_p.map(|p| p as f32))
+            .set_temperature(config.temperature)
+            .set_top_p(config.top_p)
             .set_max_tokens(config.max_tokens.map(|t| t as i32))
             .build()
     }
@@ -204,13 +212,17 @@ impl BedrockBackend {
         model: String,
         session_id: Option<Uuid>,
     ) -> BackendResult<ChatResponse> {
-        let output = response.output().ok_or_else(|| BackendError::ProviderError {
-            message: "No output in response".to_string(),
-        })?;
+        let output = response
+            .output()
+            .ok_or_else(|| BackendError::ProviderError {
+                message: "No output in response".to_string(),
+            })?;
 
-        let bedrock_message = output.as_message().map_err(|_| BackendError::ProviderError {
-            message: "Response output is not a message".to_string(),
-        })?;
+        let bedrock_message = output
+            .as_message()
+            .map_err(|_| BackendError::ProviderError {
+                message: "Response output is not a message".to_string(),
+            })?;
 
         let mut text_content = String::new();
         let mut tool_calls = Vec::new();
@@ -239,7 +251,10 @@ impl BedrockBackend {
         } else {
             Message {
                 role: MessageRole::Assistant,
-                content: tool_calls.iter().map(|tc| ContentBlock::ToolCall(tc.clone())).collect(),
+                content: tool_calls
+                    .iter()
+                    .map(|tc| ContentBlock::ToolCall(tc.clone()))
+                    .collect(),
             }
         };
 
@@ -258,7 +273,12 @@ impl BedrockBackend {
         })
     }
 
-    fn convert_error(&self, error: aws_sdk_bedrockruntime::error::SdkError<aws_sdk_bedrockruntime::operation::converse::ConverseError>) -> BackendError {
+    fn convert_error(
+        &self,
+        error: aws_sdk_bedrockruntime::error::SdkError<
+            aws_sdk_bedrockruntime::operation::converse::ConverseError,
+        >,
+    ) -> BackendError {
         let error_str = format!("{:?}", error);
 
         // Check for specific error types
@@ -299,7 +319,7 @@ impl LLMBackend for BedrockBackend {
         request: ChatRequest,
         retry_config: RetryConfig,
     ) -> Result<ChatResponse> {
-        retry_with_backoff::<_, _, ChatResponse, BackendError>(
+        retry_with_backoff::<_, _, ChatResponse>(
             || self.raw_chat(request.clone()),
             retry_config.max_retries,
             retry_config.initial_delay,
@@ -329,7 +349,7 @@ impl LLMBackend for BedrockBackend {
 }
 
 // Helper function to perform exponential backoff retry for AWS Bedrock calls
-async fn retry_with_backoff<F, Fut, T, E>(
+async fn retry_with_backoff<F, Fut, T>(
     operation: F,
     max_retries: usize,
     initial_delay: Duration,
@@ -373,9 +393,15 @@ where
                 // Don't retry validation errors
                 if !error.is_retryable() {
                     if verbose {
-                        eprintln!("⚠️  Non-retryable error detected, not retrying: {}", error_str);
+                        eprintln!(
+                            "⚠️  Non-retryable error detected, not retrying: {}",
+                            error_str
+                        );
                     } else {
-                        eprintln!("⚠️  Non-retryable error detected, not retrying: {}", concise_error);
+                        eprintln!(
+                            "⚠️  Non-retryable error detected, not retrying: {}",
+                            concise_error
+                        );
                     }
                     last_error = Some(error);
                     break;
@@ -440,7 +466,11 @@ fn extract_error_summary(error_str: &str) -> String {
     }
 
     // Look for specific exceptions
-    for exception in &["ThrottlingException", "ValidationException", "UnauthorizedException"] {
+    for exception in &[
+        "ThrottlingException",
+        "ValidationException",
+        "UnauthorizedException",
+    ] {
         if error_str.contains(exception) {
             return exception.to_string();
         }
@@ -497,13 +527,13 @@ fn document_to_json_value(doc: &Document) -> Value {
         Document::Number(n) => match n {
             Number::PosInt(i) => Value::Number(serde_json::Number::from(*i)),
             Number::NegInt(i) => Value::Number(serde_json::Number::from(*i)),
-            Number::Float(f) => Value::Number(serde_json::Number::from_f64(*f).unwrap_or_else(|| serde_json::Number::from(0))),
+            Number::Float(f) => Value::Number(
+                serde_json::Number::from_f64(*f).unwrap_or_else(|| serde_json::Number::from(0)),
+            ),
         },
         Document::Bool(b) => Value::Bool(*b),
         Document::Null => Value::Null,
-        Document::Array(arr) => {
-            Value::Array(arr.iter().map(document_to_json_value).collect())
-        }
+        Document::Array(arr) => Value::Array(arr.iter().map(document_to_json_value).collect()),
         Document::Object(obj) => {
             let mut map = serde_json::Map::new();
             for (k, v) in obj {
@@ -546,11 +576,11 @@ mod tests {
             .behavior_version(BehaviorVersion::latest())
             .build();
         let backend = BedrockBackend::new_with_config(&config);
-        
+
         let messages = vec![Message::text(MessageRole::User, "Hello")];
         let result = backend.convert_messages(&messages);
         assert!(result.is_ok());
-        
+
         let bedrock_messages = result.unwrap();
         assert_eq!(bedrock_messages.len(), 1);
     }

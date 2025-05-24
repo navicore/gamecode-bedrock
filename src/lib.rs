@@ -87,6 +87,54 @@ impl BedrockBackend {
         let bedrock_messages = self.convert_messages(&request.messages)?;
         let bedrock_tools = self.convert_tools(&request.tools.unwrap_or_default())?;
         let inference_config = self.convert_inference_config(&request.inference_config);
+        
+        // Log the converted messages
+        debug!("=== BEDROCK REQUEST DETAILS ===");
+        debug!("Model: {}", model_id);
+        debug!("Number of messages: {}", bedrock_messages.len());
+        for (i, msg) in bedrock_messages.iter().enumerate() {
+            debug!("Message {}: role={:?}", i, msg.role());
+            for (j, block) in msg.content().iter().enumerate() {
+                match block {
+                    BedrockContentBlock::Text(text) => {
+                        debug!("  Content block {}: Text ({})", j, text);
+                    }
+                    BedrockContentBlock::ToolUse(tool_use) => {
+                        debug!("  Content block {}: ToolUse (name={}, id={})", 
+                            j, tool_use.name(), tool_use.tool_use_id());
+                        debug!("    Input: {}", serde_json::to_string_pretty(&document_to_json_value(tool_use.input())).unwrap_or_default());
+                    }
+                    BedrockContentBlock::ToolResult(tool_result) => {
+                        debug!("  Content block {}: ToolResult (id={})", j, tool_result.tool_use_id());
+                    }
+                    _ => {
+                        debug!("  Content block {}: Other", j);
+                    }
+                }
+            }
+        }
+        
+        debug!("Number of tools: {}", bedrock_tools.len());
+        for (i, tool) in bedrock_tools.iter().enumerate() {
+            match tool {
+                BedrockTool::ToolSpec(spec) => {
+                    debug!("Tool {}: {} - {:?}", i, spec.name(), spec.description());
+                    if let Some(ToolInputSchema::Json(schema)) = spec.input_schema() {
+                        let schema_json = document_to_json_value(schema);
+                        debug!("  Schema: {}", serde_json::to_string_pretty(&schema_json).unwrap_or_default());
+                    }
+                }
+                _ => {
+                    debug!("Tool {}: Unknown tool type", i);
+                }
+            }
+        }
+        
+        debug!("Inference config: temperature={:?}, top_p={:?}, max_tokens={:?}", 
+            inference_config.temperature(), 
+            inference_config.top_p(), 
+            inference_config.max_tokens());
+        debug!("=== END REQUEST DETAILS ===");
 
         // Build request
         let mut request_builder = self
@@ -116,10 +164,41 @@ impl BedrockBackend {
         }
 
         // Send request
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| self.convert_error(e))?;
+        let response = match request_builder.send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                debug!("=== BEDROCK ERROR DETAILS ===");
+                debug!("Full error: {:?}", e);
+                
+                // Try to extract service error details
+                use aws_sdk_bedrockruntime::operation::converse::ConverseError;
+                if let aws_sdk_bedrockruntime::error::SdkError::ServiceError(service_err) = &e {
+                    debug!("Service error: {:?}", service_err);
+                    
+                    match service_err.err() {
+                        ConverseError::ThrottlingException(ex) => {
+                            debug!("  ThrottlingException: {:?}", ex.message());
+                        }
+                        ConverseError::ValidationException(ex) => {
+                            debug!("  ValidationException: {:?}", ex.message());
+                        }
+                        _ => {
+                            debug!("  Other error type");
+                        }
+                    }
+                }
+                debug!("=== END ERROR DETAILS ===");
+                return Err(self.convert_error(e));
+            }
+        };
+
+        // Log response details
+        debug!("=== BEDROCK RESPONSE DETAILS ===");
+        if let Some(usage) = response.usage() {
+            debug!("Token usage: input={}, output={}, total={}", 
+                usage.input_tokens(), usage.output_tokens(), usage.total_tokens());
+        }
+        debug!("=== END RESPONSE DETAILS ===");
 
         // Convert response
         self.convert_response(response, model_id.clone(), request.session_id)
@@ -287,22 +366,38 @@ impl BedrockBackend {
             aws_sdk_bedrockruntime::operation::converse::ConverseError,
         >,
     ) -> BackendError {
+        use aws_sdk_bedrockruntime::operation::converse::ConverseError;
+        
+        // First check for service errors with proper types
+        if let aws_sdk_bedrockruntime::error::SdkError::ServiceError(service_err) = &error {
+            debug!("Bedrock service error: {:?}", service_err.err());
+            
+            match service_err.err() {
+                ConverseError::ThrottlingException(_e) => {
+                    debug!("Detected ThrottlingException");
+                    return BackendError::RateLimited;
+                }
+                ConverseError::ValidationException(e) => {
+                    debug!("Detected ValidationException: {:?}", e.message());
+                    return BackendError::ValidationError {
+                        message: e.message().unwrap_or("Validation error").to_string(),
+                    };
+                }
+                ConverseError::ResourceNotFoundException(e) => {
+                    debug!("Detected ResourceNotFoundException: {:?}", e.message());
+                    return BackendError::ValidationError {
+                        message: format!("Resource not found: {}", e.message().unwrap_or("unknown")),
+                    };
+                }
+                _ => {
+                    debug!("Unknown service error type");
+                }
+            }
+        }
+        
+        // Fallback to string matching for other error types
         let error_str = format!("{:?}", error);
-
-        // Check for specific error types
-        if error_str.contains("ThrottlingException") || error_str.contains("Too many requests") {
-            return BackendError::RateLimited;
-        }
-
-        if error_str.contains("ValidationException") || error_str.contains("InvalidRequest") {
-            return BackendError::ValidationError {
-                message: extract_error_summary(&error_str),
-            };
-        }
-
-        if error_str.contains("UnauthorizedException") || error_str.contains("AccessDenied") {
-            return BackendError::AuthenticationError;
-        }
+        debug!("Bedrock API error (full): {}", error_str);
 
         // Default to provider error
         BackendError::ProviderError {

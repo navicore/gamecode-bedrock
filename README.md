@@ -1,3 +1,8 @@
+<!-- ghmig:moved -->
+> **This repository has moved to [https://git.navicore.tech/navicore/gamecode-bedrock](https://git.navicore.tech/navicore/gamecode-bedrock).**
+>
+> The GitHub copy is archived and no longer maintained.
+
 # gamecode-bedrock
 
 AWS Bedrock implementation for the gamecode-backend trait with production-ready retry logic and error handling.
